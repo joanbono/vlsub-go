@@ -44,19 +44,35 @@ Requires Go 1.26 or newer. No dependencies outside the standard library.
 
 ## Releasing
 
-Tag and push; [`.github/workflows/release.yml`](.github/workflows/release.yml) builds all
-six targets, packages each with the README and LICENSE, writes `checksums.txt`, and
-publishes a GitHub release:
+Releases are driven by the [`VERSION`](VERSION) file. Bump it and push to `main`:
 
 ```sh
-git tag -a v0.2.0 -m "v0.2.0"
-git push origin v0.2.0
+echo 0.3.0 > VERSION
+git commit -am "Release 0.3.0" && git push
 ```
 
-The tag name becomes the version, stamped into the binary via
-`-ldflags "-X main.version=..."`, so `vlsub-go -version` reports it. Run the workflow
-manually from the Actions tab to produce the same archives as artifacts without publishing
-a release.
+[`.github/workflows/release.yml`](.github/workflows/release.yml) then tags `v0.3.0`, builds
+all six targets, packages each with the README and LICENSE, writes `checksums.txt`, and
+publishes the GitHub release. No manual tagging, and no third-party actions.
+
+The version is stamped into the binary with `-ldflags "-X main.version=..."`, so
+`vlsub-go -version` reports it.
+
+Details worth knowing:
+
+- **Pushes where `VERSION` has not changed do nothing.** The workflow compares it against
+  the existing tags and stops if that version is already released, so ordinary commits to
+  `main` are free.
+- **`VERSION` must be plain semver** — `1.2.3`, or `1.2.3-rc1` for a prerelease. No leading
+  `v`. Anything else fails the run rather than publishing a misnamed release.
+- **Pushing a tag by hand still works** and takes precedence over the file.
+- **A manual run** from the Actions tab builds every target and uploads the archives as
+  workflow artifacts without publishing a release — useful for checking a build before
+  committing to a version.
+
+Tagging happens inside the release workflow rather than in a separate one by necessity: a
+tag pushed using the default `GITHUB_TOKEN` does not trigger further workflow runs, so a
+split auto-tag design would tag and then build nothing.
 
 ## Usage
 

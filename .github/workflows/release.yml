@@ -1,23 +1,79 @@
 name: Release
 
-# Pushing a tag such as v0.2.0 builds every target and publishes a GitHub
-# release with the archives attached. A manual run builds and uploads the same
-# archives as workflow artifacts without publishing anything.
+# Releases are driven by the VERSION file. Bump it, push to main, and this
+# workflow tags and publishes automatically:
+#
+#   echo 0.3.0 > VERSION
+#   git commit -am "Release 0.3.0" && git push
+#
+# Pushing a tag by hand also works. A manual run from the Actions tab builds
+# and uploads the archives as artifacts without publishing anything.
+#
+# Tagging happens inside this workflow rather than in a separate one on
+# purpose: a tag pushed with GITHUB_TOKEN does not trigger further workflow
+# runs, so a split design would build nothing.
 on:
   push:
+    branches: [main]
     tags: ["v*"]
   workflow_dispatch:
-    inputs:
-      version:
-        description: Version string to stamp into a test build
-        required: false
-        default: dev-manual
 
 permissions:
   contents: read
 
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      release: ${{ steps.plan.outputs.release }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Decide what to build
+        id: plan
+        run: |
+          set -euo pipefail
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+            release=true
+            reason="tag $version was pushed"
+          else
+            if [ ! -f VERSION ]; then
+              echo "::error::VERSION file is missing"
+              exit 1
+            fi
+
+            raw="$(tr -d '[:space:]' < VERSION)"
+            # Reject anything that is not semver, so a typo cannot publish a
+            # release named after whatever ended up in the file.
+            if ! printf '%s' "$raw" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$'; then
+              echo "::error::VERSION must look like 1.2.3, got '$raw'"
+              exit 1
+            fi
+            version="v$raw"
+
+            if git ls-remote --exit-code --tags origin "refs/tags/$version" >/dev/null 2>&1; then
+              release=false
+              reason="$version is already tagged, nothing to do"
+            elif [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+              release=false
+              reason="manual run, building $version without publishing"
+            else
+              release=true
+              reason="VERSION names $version, which is not tagged yet"
+            fi
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "release=$release" >> "$GITHUB_OUTPUT"
+          echo "**$version** — $reason" >> "$GITHUB_STEP_SUMMARY"
+
   build:
+    needs: plan
+    # Skip entirely when VERSION has not moved; ci.yml already covers plain pushes.
+    if: needs.plan.outputs.release == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -40,23 +96,12 @@ jobs:
           # There are no dependencies and so no go.sum to key a cache on.
           cache: false
 
-      - name: Resolve version
-        id: meta
-        run: |
-          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            version="$GITHUB_REF_NAME"
-          else
-            version="${{ inputs.version }}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "Building $version"
-
       - name: Build and package
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "0"
-          VERSION: ${{ steps.meta.outputs.version }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
 
@@ -92,9 +137,8 @@ jobs:
           retention-days: 7
 
   release:
-    needs: build
-    # Only a tag push publishes; a manual run stops after the build job.
-    if: github.ref_type == 'tag'
+    needs: [plan, build]
+    if: needs.plan.outputs.release == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -119,10 +163,16 @@ jobs:
         env:
           # The built-in token is enough; no PAT required.
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.plan.outputs.version }}
         run: |
           set -euo pipefail
-          gh release create "$GITHUB_REF_NAME" \
-            --title "$GITHUB_REF_NAME" \
+
+          # gh creates the tag itself when it does not exist, pointing at this
+          # commit, which is why no separate tag push is needed.
+          gh release create "$VERSION" \
+            --title "$VERSION" \
+            --target "$GITHUB_SHA" \
             --generate-notes \
-            --verify-tag \
             dist/*
+
+          echo "Published $VERSION" >> "$GITHUB_STEP_SUMMARY"
