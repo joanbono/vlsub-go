@@ -10,20 +10,42 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"syscall"
 	"time"
 )
 
 const (
-	version = "0.2.0"
 	maxBody = 16 << 20
 
 	// The .org XML-RPC API keys its rate limits off the User-Agent and rejects
 	// unregistered ones, so we send the same string vlsub does.
 	orgUserAgent = "VLSub 0.10.2"
-	comUserAgent = "vlsub-go v" + version
 )
+
+// version identifies the build. Release binaries stamp it at link time with
+//
+//	-ldflags "-X main.version=v1.2.3"
+//
+// and anything installed with "go install" falls back to the module version
+// the toolchain records in the binary.
+var version = "dev"
+
+func init() {
+	if version != "dev" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok {
+		if v := bi.Main.Version; v != "" && v != "(devel)" {
+			version = v
+		}
+	}
+}
+
+// comUserAgent is a function rather than a constant so that it observes the
+// stamped version.
+func comUserAgent() string { return "vlsub-go v" + version }
 
 func main() {
 	if err := run(os.Args[1:], os.Stdout); err != nil {

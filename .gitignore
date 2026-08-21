@@ -10,6 +10,10 @@
 
 # The compiled CLI, which shares its name with the module
 /vlsub-go
+/vlsub-go.exe
+
+# Release archives built by .github/workflows/release.yml
+/dist/
 
 # Test binary, built with `go test -c`
 *.test

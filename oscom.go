@@ -76,7 +76,7 @@ func (c *ComProvider) do(ctx context.Context, method, endpoint string, in, out a
 		return err
 	}
 	req.Header.Set("Api-Key", c.APIKey)
-	req.Header.Set("User-Agent", comUserAgent)
+	req.Header.Set("User-Agent", comUserAgent())
 	req.Header.Set("Accept", "application/json")
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -229,7 +229,7 @@ func (c *ComProvider) Fetch(ctx context.Context, r Result) ([]byte, string, stri
 	if err != nil {
 		return nil, "", note, err
 	}
-	req.Header.Set("User-Agent", comUserAgent)
+	req.Header.Set("User-Agent", comUserAgent())
 
 	dl, err := c.HTTP.Do(req)
 	if err != nil {

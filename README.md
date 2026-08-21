@@ -19,11 +19,21 @@ searching by the title parsed from the filename.
 
 ## Install
 
+Download a binary for your platform from the
+[latest release](https://github.com/joanbono/vlsub-go/releases/latest) — Linux, macOS and
+Windows on amd64 and arm64. Each release ships a `checksums.txt`:
+
+```sh
+sha256sum -c checksums.txt --ignore-missing
+```
+
+With a Go toolchain:
+
 ```sh
 go install github.com/joanbono/vlsub-go@latest
 ```
 
-Or build from a clone:
+Or from a clone:
 
 ```sh
 git clone https://github.com/joanbono/vlsub-go && cd vlsub-go
@@ -31,6 +41,22 @@ go build -o vlsub-go .
 ```
 
 Requires Go 1.26 or newer. No dependencies outside the standard library.
+
+## Releasing
+
+Tag and push; [`.github/workflows/release.yml`](.github/workflows/release.yml) builds all
+six targets, packages each with the README and LICENSE, writes `checksums.txt`, and
+publishes a GitHub release:
+
+```sh
+git tag -a v0.2.0 -m "v0.2.0"
+git push origin v0.2.0
+```
+
+The tag name becomes the version, stamped into the binary via
+`-ldflags "-X main.version=..."`, so `vlsub-go -version` reports it. Run the workflow
+manually from the Actions tab to produce the same archives as artifacts without publishing
+a release.
 
 ## Usage
 

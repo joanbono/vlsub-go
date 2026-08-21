@@ -1,0 +1,128 @@
+name: Release
+
+# Pushing a tag such as v0.2.0 builds every target and publishes a GitHub
+# release with the archives attached. A manual run builds and uploads the same
+# archives as workflow artifacts without publishing anything.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version string to stamp into a test build
+        required: false
+        default: dev-manual
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version: stable
+          check-latest: true
+          # There are no dependencies and so no go.sum to key a cache on.
+          cache: false
+
+      - name: Resolve version
+        id: meta
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+          else
+            version="${{ inputs.version }}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version"
+
+      - name: Build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GOOS" = "windows" ]; then
+            bin="vlsub-go.exe"
+          else
+            bin="vlsub-go"
+          fi
+
+          # -trimpath keeps absolute runner paths out of the binary, and
+          # -s -w drops the symbol table and DWARF data.
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "$bin" .
+
+          name="vlsub-go_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/$name"
+          mv "$bin" "dist/$name/"
+          cp README.md LICENSE "dist/$name/"
+
+          cd dist
+          if [ "$GOOS" = "windows" ]; then
+            zip -qr "${name}.zip" "$name"
+          else
+            tar -czf "${name}.tar.gz" "$name"
+          fi
+          rm -rf "$name"
+          ls -la
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    # Only a tag push publishes; a manual run stops after the build job.
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          pattern: dist-*
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          # Globs are listed explicitly so the checksum file cannot include itself.
+          sha256sum vlsub-go_*.tar.gz vlsub-go_*.zip | tee checksums.txt
+
+      - name: Publish release
+        env:
+          # The built-in token is enough; no PAT required.
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag \
+            dist/*
